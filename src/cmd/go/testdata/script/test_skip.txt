@@ -1,3 +1,7 @@
+# 测试目标:go test 的 -skip 参数(按模式跳过测试/子测试/示例)。
+# 各段依次验证:-skip 与 -run 组合时跳过优先;-skip T 匹配不到任何测试;
+# -skip 1 只跳过 Test1;-skip 2/3 连子测试一起跳过;-skip 2/4 什么也不匹配;
+# -skip Example 单独跳过示例函数。被跳过的测试不得输出 RUN。
 go test -v -run Test -skip T skip_test.go
 ! stdout RUN
 stdout '^ok.*\[no tests to run\]'
@@ -33,6 +37,8 @@ package skip_test
 
 import "testing"
 
+// 测试夹具:Test1 为普通测试;Test2 含子测试 "3";
+// ExampleTest1 为带空输出的示例函数,-skip Example 应能命中它。
 func Test1(t *testing.T) {
 }
 

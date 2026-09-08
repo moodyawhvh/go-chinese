@@ -1,3 +1,6 @@
+# 测试目标:go test 的 -overlay(文件叠加)参数。
+# 通过 foo/overlay.json 把包内的 foo_test.go 替换为 tmp/bar_test.go,
+# 验证 -list 能列出叠加后的测试名 TestBar,说明 overlay 对 go test 生效。
 cd $WORK/gopath/src/foo
 go test -list=. -overlay=overlay.json .
 stdout 'TestBar'
@@ -9,12 +12,15 @@ package foo
 
 import "testing"
 
+// 磁盘上的原始测试:只包含 TestFoo。
 func TestFoo(t *testing.T) { }
 -- tmp/bar_test.go --
 package foo
 
 import "testing"
 
+// 叠加文件中的测试:通过 overlay.json 替换 foo_test.go 后生效,
+// 故障输出仅用于占位,不会被 -list 执行。
 func TestBar(t *testing.T) {
 	t.Fatal("dummy failure")
 }
