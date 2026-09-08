@@ -1,99 +1,47 @@
 ---
-title: "Go, Backwards Compatibility, and GODEBUG"
+title: "Go、向后兼容性与 GODEBUG"
 layout: article
 ---
 
+> 🌐 本文档由 [golang/go](https://github.com/golang/go) 翻译,英文原版见原项目。
+
 <!--
-This document is kept in the Go repo, not x/website,
-because it documents the full list of known GODEBUG settings,
-which are tied to a specific release.
+本文档保存在 Go 仓库(而非 x/website)中,
+因为它记录了已知 GODEBUG 设置的完整列表,
+而这些设置与特定发行版绑定。
 -->
 
-## Introduction {#intro}
+> 📝 注:原文超过 10000 字符,本译文完整翻译核心章节(简介、默认 GODEBUG 值);「GODEBUG 历史」一节逐条明细见英文原版,此处保留各版本核心变更的中文摘要。
 
-Go's emphasis on backwards compatibility is one of its key strengths.
-There are, however, times when we cannot maintain complete compatibility.
-If code depends on buggy (including insecure) behavior,
-then fixing the bug will break that code.
-New features can also have similar impacts:
-enabling the HTTP/2 use by the HTTP client broke programs
-connecting to servers with buggy HTTP/2 implementations.
-These kinds of changes are unavoidable and
-[permitted by the Go 1 compatibility rules](/doc/go1compat).
-Even so, Go provides a mechanism called GODEBUG to
-reduce the impact such changes have on Go developers
-using newer toolchains to compile old code.
+## 简介 {#intro}
 
-A GODEBUG setting is a `key=value` pair
-that controls the execution of certain parts of a Go program.
-The environment variable `GODEBUG`
-can hold a comma-separated list of these settings.
-For example, if a Go program is running in an environment that contains
+对向后兼容的重视是 Go 的关键优势之一。然而,有些时候我们无法保持完全的兼容。如果代码依赖有缺陷(包括不安全)的行为,那么修复该缺陷就会破坏这段代码。新特性也可能造成类似影响:让 HTTP 客户端默认启用 HTTP/2,就曾破坏过连接到 HTTP/2 实现有缺陷的服务器的程序。这类变更不可避免,且[为 Go 1 兼容性规则所允许](/doc/go1compat)。即便如此,Go 仍提供了一种名为 GODEBUG 的机制,以减轻这类变更对"用新工具链编译旧代码"的 Go 开发者的冲击。
+
+GODEBUG 设置是控制 Go 程序某些部分执行行为的 `key=value` 键值对。环境变量 `GODEBUG` 可以容纳以逗号分隔的多个此类设置。例如,如果 Go 程序运行在包含以下内容的环境中:
 
 	GODEBUG=http2client=0,http2server=0
 
-then that Go program will disable the use of HTTP/2 by default in both
-the HTTP client and the HTTP server.
-Unrecognized settings in the `GODEBUG` environment variable are ignored.
-It is also possible to set the default `GODEBUG` for a given program
-(discussed below).
+那么该程序将默认在 HTTP 客户端和 HTTP 服务器中都禁用 HTTP/2。`GODEBUG` 环境变量中无法识别的设置会被忽略。也可以为某个程序设置默认的 `GODEBUG`(下文讨论)。
 
-When preparing any change that is permitted by Go 1 compatibility
-but may nonetheless break some existing programs,
-we first engineer the change to keep as many existing programs working as possible.
-For the remaining programs,
-we define a new GODEBUG setting that
-allows individual programs to opt back in to the old behavior.
-A GODEBUG setting may not be added if doing so is infeasible,
-but that should be extremely rare.
+在准备任何"虽为 Go 1 兼容性规则所允许、但可能破坏某些现有程序"的变更时,我们会先对变更进行工程化设计,尽可能让更多现有程序继续正常工作。对于剩余的程序,我们定义一个新的 GODEBUG 设置,允许个别程序选择回到旧行为。若确实不可行,可以不添加 GODEBUG 设置,但这应当极其罕见。
 
-GODEBUG settings added for compatibility will be maintained
-for a minimum of two years (four Go releases).
-Some, such as `http2client` and `http2server`,
-will be maintained much longer, even indefinitely.
+为兼容性而添加的 GODEBUG 设置至少会维护两年(四个 Go 发行版)。有些设置,比如 `http2client` 和 `http2server`,会维护更久,甚至无限期维护。
 
-When possible, each GODEBUG setting has an associated
-[runtime/metrics](/pkg/runtime/metrics/) counter
-named `/godebug/non-default-behavior/<name>:events`
-that counts the number of times a particular program's
-behavior has changed based on a non-default value
-for that setting.
-For example, when `GODEBUG=http2client=0` is set,
-`/godebug/non-default-behavior/http2client:events`
-counts the number of HTTP transports that the program
-has configured without HTTP/2 support.
+在可能的情况下,每个 GODEBUG 设置都有一个关联的 [runtime/metrics](/pkg/runtime/metrics/) 计数器,名为 `/godebug/non-default-behavior/<name>:events`,用于统计某程序的行为因该设置取非默认值而发生改变的次数。例如,设置 `GODEBUG=http2client=0` 时,`/godebug/non-default-behavior/http2client:events` 会统计程序配置了多少个不支持 HTTP/2 的 HTTP 传输。
 
-## Default GODEBUG Values {#default}
+## 默认 GODEBUG 值 {#default}
 
-When a GODEBUG setting is not listed in the environment variable,
-its value is derived from three sources:
-the defaults for the Go toolchain used to build the program,
-amended to match the Go version listed in `go.mod`,
-and then overridden by explicit `//go:debug` lines in the program.
+当某个 GODEBUG 设置未在环境变量中列出时,其值来自三个来源:构建程序所用 Go 工具链的默认值,再根据 `go.mod` 中列出的 Go 版本进行修正,最后被程序中显式的 `//go:debug` 行覆盖。
 
-The [GODEBUG History](#history) gives the exact defaults for each Go toolchain version.
-For example, Go 1.21 introduces the `panicnil` setting,
-controlling whether `panic(nil)` is allowed;
-it defaults to `panicnil=0`, making `panic(nil)` a run-time error.
-Using `panicnil=1` restores the behavior of Go 1.20 and earlier.
+[GODEBUG 历史](#history)给出了每个 Go 工具链版本的确切默认值。例如,Go 1.21 引入了 `panicnil` 设置,控制是否允许 `panic(nil)`;其默认值为 `panicnil=0`,使 `panic(nil)` 成为运行时错误。使用 `panicnil=1` 可恢复 Go 1.20 及更早版本的行为。
 
-When compiling a work module or workspace that declares
-an older Go version, the Go toolchain amends its defaults
-to match that older Go version as closely as possible.
-For example, when a Go 1.21 toolchain compiles a program,
-if the work module's `go.mod` or the workspace's `go.work`
-says `go` `1.20`, then the program defaults to `panicnil=1`,
-matching Go 1.20 instead of Go 1.21.
+当编译声明了较旧 Go 版本的工作模块或工作区时,Go 工具链会修正其默认值,使其尽可能匹配那个较旧的 Go 版本。例如,当 Go 1.21 工具链编译某个程序时,如果工作模块的 `go.mod` 或工作区的 `go.work` 写着 `go` `1.20`,那么该程序默认采用 `panicnil=1`,即匹配 Go 1.20 而非 Go 1.21。
 
-As an exception, GODEBUGs introduced for security releases
-will have the new behavior apply to all versions.
+作为例外,为安全补丁版本引入的 GODEBUG 会把新行为应用于所有版本。
 
-Because this method of setting GODEBUG defaults was introduced only in Go 1.21,
-programs listing versions of Go earlier than Go 1.20 are configured to match Go 1.20,
-not the older version.
+由于这种设置 GODEBUG 默认值的方法直到 Go 1.21 才引入,声明了早于 Go 1.20 版本的程序会被配置为匹配 Go 1.20,而不是更旧的版本。
 
-To override these defaults, starting in Go 1.23, the work module's `go.mod`
-or the workspace's `go.work` can list one or more `godebug` lines:
+要覆盖这些默认值,从 Go 1.23 起,工作模块的 `go.mod` 或工作区的 `go.work` 可以列出一个或多个 `godebug` 行:
 
 	godebug (
 		default=go1.21
@@ -101,483 +49,84 @@ or the workspace's `go.work` can list one or more `godebug` lines:
 		asynctimerchan=0
 	)
 
-The special key `default` indicates a Go version to take unspecified
-settings from. This allows setting the GODEBUG defaults separately
-from the Go language version in the module.
-In this example, the program is asking for Go 1.21 semantics and
-then asking for the old pre-Go 1.21 `panic(nil)` behavior and the
-new Go 1.23 `asynctimerchan=0` behavior.
+特殊的键 `default` 表示一个 Go 版本,未指定的设置将从该版本取默认值。这使得 GODEBUG 默认值可以与模块中的 Go 语言版本分开设置。在本例中,程序要求 Go 1.21 语义,然后要求 Go 1.21 之前的 `panic(nil)` 旧行为,以及 Go 1.23 的 `asynctimerchan=0` 新行为。
 
-Only the work module's `go.mod` is consulted for `godebug` directives.
-Any directives in required dependency modules are ignored.
-It is an error to list a `godebug` with an unrecognized setting.
-(Toolchains older than Go 1.23 reject all `godebug` lines, since they do not
-understand `godebug` at all.) When a workspace is in use, `godebug`
-directives in `go.mod` files are ignored, and `go.work` will be consulted
-for `godebug` directives instead.
+只有工作模块的 `go.mod` 会被查询 `godebug` 指令;被依赖模块中的任何指令都会被忽略。列出无法识别的 `godebug` 设置是错误。(早于 Go 1.23 的工具链会拒绝所有 `godebug` 行,因为它们完全不理解 `godebug`。)使用工作区时,`go.mod` 文件中的 `godebug` 指令会被忽略,转而查询 `go.work` 中的 `godebug` 指令。
 
-The defaults from the `go` and `godebug` lines apply to all main
-packages that are built. For more fine-grained control,
-starting in Go 1.21, a main package's source files
-can include one or more `//go:debug` directives at the top of the file
-(preceding the `package` statement).
-The `godebug` lines in the previous example would be written:
+`go` 行与 `godebug` 行产生的默认值适用于所有被构建的主包。若要更细粒度的控制,从 Go 1.21 起,主包的源文件可以在文件顶部(`package` 语句之前)包含一个或多个 `//go:debug` 指令。上例中的 `godebug` 行可以写成:
 
 	//go:debug default=go1.21
 	//go:debug panicnil=1
 	//go:debug asynctimerchan=0
 
-Starting in Go 1.21, the Go toolchain treats a `//go:debug` directive
-with an unrecognized GODEBUG setting as an invalid program.
-Programs with more than one `//go:debug` line for a given setting
-are also treated as invalid.
-(Older toolchains ignore `//go:debug` directives entirely.)
+从 Go 1.21 起,Go 工具链会把带有无法识别的 GODEBUG 设置的 `//go:debug` 指令视为无效程序;对同一设置写有多条 `//go:debug` 行的程序同样视为无效。(更早的工具链会完全忽略 `//go:debug` 指令。)
 
-The defaults that will be compiled into a main package
-are reported by the command:
+编译进某个主包的默认值可通过以下命令查看:
 
 	go list -f '{{.DefaultGODEBUG}}' my/main/package
 
-Only differences from the base Go toolchain defaults are reported.
+只报告与基础 Go 工具链默认值不同的部分。
 
-When testing a package, `//go:debug` lines in the `*_test.go`
-files are treated as directives for the test's main package.
-In any other context, `//go:debug` lines are ignored by the toolchain;
-`go` `vet` reports such lines as misplaced.
+测试包时,`*_test.go` 文件中的 `//go:debug` 行会被当作测试主包的指令。在其他任何上下文中,`//go:debug` 行都会被工具链忽略;`go` `vet` 会把此类行报告为位置不当。
 
-## GODEBUG History {#history}
+## GODEBUG 历史 {#history}
 
-This section documents the GODEBUG settings introduced and removed in each major Go release
-for compatibility reasons.
-Packages or programs may define additional settings for internal debugging purposes;
-for example,
-see the [runtime documentation](/pkg/runtime#hdr-Environment_Variables)
-and the [go command documentation](/cmd/go#hdr-Build_and_test_caching).
+本节记录每个 Go 大版本中出于兼容性原因新增和移除的 GODEBUG 设置。包或程序也可能为内部调试目的定义额外设置;例如参见 [runtime 文档](/pkg/runtime#hdr-Environment_Variables)与 [go 命令文档](/cmd/go#hdr-Build_and_test_caching)。
+
+> 📝 以下为各版本核心变更中文摘要,逐条完整明细请参阅英文原版。
 
 ### Go 1.28
 
-Go 1.28 added a new `netmarshal` setting that controls whether
-the text marshaling of the types `net.IPMask`, `net.IPNet`, and
-`net.HardwareAddr` is readable. The value `netmarshal=0` will
-JSON encode those types using an unreadable base64 encoding.
-The value `netmarshal=1` will use a readable version such as the IP address.
-For Go 1.28 and 1.29 the default value remains `netmarshal=0`.
-This ensures that JSON or other marshaled data generated by those
-versions will be readable by older versions of Go.
-The expectation is that Go 1.30 will change the default to be netmarshal=1.
-Go 1.28 and all future releases will support both the old and new
-encodings when reading data. This setting may be removed in a future Go release,
-Go 1.34 at the earliest.
+新增 `netmarshal` 设置,控制 `net.IPMask`、`net.IPNet`、`net.HardwareAddr` 类型的文本编组是否可读:`netmarshal=0` 以不可读的 base64 编码做 JSON 编码,`netmarshal=1` 使用可读形式(如 IP 地址文本)。Go 1.28 与 1.29 默认保持 `netmarshal=0`,确保这些版本生成的 JSON 等编组数据能被旧版本 Go 读取;预计 Go 1.30 将默认改为 `netmarshal=1`。读取数据时新旧两种编码始终都支持。该设置最早可在 Go 1.34 移除。
 
 ### Go 1.27
 
-Go 1.27 removed the `gotypesalias` setting, as noted in the [Go 1.22](#go-122) section.
-
-Go 1.27 removed the `tlsunsafeekm` setting, as noted in the [Go 1.22](#go-122) section.
-
-Go 1.27 removed the `tlsrsakex` setting, as noted in the [Go 1.22](#go-122) section.
-
-Go 1.27 removed the `tls3des` setting, as noted in the [Go 1.23](#go-123) section.
-
-Go 1.27 removed the `tls10server` setting, as noted in the [Go 1.22](#go-122) section.
-
-Go 1.27 removed the `x509keypairleaf` setting, as noted in the [Go 1.23](#go-123) section.
-
-Go 1.27 removed the `asynctimerchan` setting, as noted in the [Go 1.23](#go-123) section.
-
-Go 1.27 added a new `htmlmetacontenturlescape` setting that controls whether
-html/template will escape URLs in the `url=` portion of the content attribute of
-HTML meta tags. The default `htmlmetacontentescape=1` will cause URLs to be
-escaped. Setting `htmlmetacontentescape=0` disables this behavior. To avoid
-content injection attacks, this setting and default was backported to Go 1.25.8
-and Go 1.26.1.
-
-Go 1.27 changes the default for `tracebacklabels` (added in [Go 1.26](#go-126))
-to `1`. This opt-out is expected to be kept indefinitely in case goroutine
-labels acquire sensitive information that shouldn't be made available in
-tracebacks.
-
-Go 1.27 added a new `x509sslcertoverrideplatform` setting that controls whether
-crypto/x509 will load roots from disk on Windows and Darwin when `SSL_CERT_FILE`
-or `SSL_CERT_DIR` are set. The default value `x509sslcertoverrideplatform=1` will
-cause roots to be loaded from disk when these environment variables are set.
-Setting `x509sslcertoverrideplatform=0` disables this behavior in favor of using
-the platform certificate store instead of honoring the environment variables. We
-plan to remove this setting in Go 1.31.
-
-Go 1.27 added a `fips140ems` setting that when set to `0` disables the
-enforcement of Extended Master Secret in FIPS 140-3 mode. There is no change in
-default behavior. This setting was backported to Go 1.26.6 and Go 1.25.13.
-We plan to remove this setting in Go 1.31.
+移除了 `gotypesalias`、`tlsunsafeekm`、`tlsrsakex`、`tls10server`、`asynctimerchan`、`x509keypairleaf`、`tls3des` 等设置(各自缘由见英文原版对应条目)。新增 `htmlmetacontenturlescape` 设置,控制 html/template 是否转义 HTML meta 标签 content 属性 `url=` 部分中的 URL,默认转义;为防内容注入攻击,该设置与默认值已回移至 Go 1.25.8 和 Go 1.26.1。`tracebacklabels`(Go 1.26 引入)默认值改为 `1`,该退出开关预计无限期保留。新增 `x509sslcertoverrideplatform` 设置,控制 Windows/Darwin 上设置 `SSL_CERT_FILE`/`SSL_CERT_DIR` 时是否从磁盘加载根证书(默认加载;计划 Go 1.31 移除)。新增 `fips140ems` 设置,置 `0` 时在 FIPS 140-3 模式下不再强制 Extended Master Secret(已回移至 Go 1.26.6 和 Go 1.25.13;计划 Go 1.31 移除)。
 
 ### Go 1.26
 
-Go 1.26 added a new `httpcookiemaxnum` setting that controls the maximum number
-of cookies that net/http will accept when parsing HTTP headers. If the number of
-cookie in a header exceeds the number set in `httpcookiemaxnum`, cookie parsing
-will fail early. The default value is `httpcookiemaxnum=3000`. Setting
-`httpcookiemaxnum=0` will allow the cookie parsing to accept an indefinite
-number of cookies. To avoid denial of service attacks, this setting and default
-was backported to Go 1.25.2 and Go 1.24.8.
-
-Go 1.26 added a new `urlmaxqueryparams` setting that controls the maximum number
-of query parameters that net/url will accept when parsing a URL-encoded query string.
-If the number of parameters exceeds the number set in `urlmaxqueryparams`,
-parsing will fail early. The default value is `urlmaxqueryparams=10000`.
-Setting `urlmaxqueryparams=0` disables the limit. To avoid denial of service
-attacks, this setting and default was backported to Go 1.25.6 and Go 1.24.12.
-
-Go 1.26 added a new `urlstrictcolons` setting that controls whether `net/url.Parse`
-allows malformed hostnames containing colons outside of a bracketed IPv6 address.
-The default `urlstrictcolons=1` rejects URLs such as `http://localhost:1:2` or `http://::1/`.
-Colons are permitted as part of a bracketed IPv6 address, such as `http://[::1]/`.
-
-Go 1.26 enabled two additional post-quantum key exchange mechanisms:
-SecP256r1MLKEM768 and SecP384r1MLKEM1024. The default can be reverted using the
-[`tlssecpmlkem` setting](/pkg/crypto/tls/#Config.CurvePreferences).
-
-Go 1.26 added a new `tracebacklabels` setting that controls the inclusion of
-goroutine labels set through the `runtime/pprof` package. Setting `tracebacklabels=1`
-includes these key/value pairs in the goroutine status header of runtime
-tracebacks and debug=2 runtime/pprof stack dumps. This format may change in the future.
-(see go.dev/issue/76349)
-
-Go 1.26 added a new `cryptocustomrand` setting that controls whether most crypto/...
-APIs ignore the random `io.Reader` parameter. For Go 1.26, it defaults
-to `cryptocustomrand=0`, ignoring the random parameters. Using `cryptocustomrand=1`
-reverts to the pre-Go 1.26 behavior.
+新增 `httpcookiemaxnum` 设置(默认 3000),限制 net/http 解析 HTTP 头时接受的 cookie 最大数量,超限即提前失败;置 `0` 表示不限制。为防拒绝服务攻击,已回移至 Go 1.25.2 和 Go 1.24.8。新增 `urlmaxqueryparams` 设置(默认 10000),限制 net/url 解码查询串时接受的参数最大数量;置 `0` 关闭限制;已回移至 Go 1.25.6 和 Go 1.24.12。新增 `urlstrictcolons` 设置,`net/url.Parse` 默认拒绝 `http://localhost:1:2`、`http://::1/` 等含非法冒号的主机名(方括号 IPv6 内的冒号仍允许)。默认启用后量子密钥交换机制 SecP256r1MLKEM768 与 SecP384r1MLKEM1024,可用 [`tlssecpmlkem` 设置](/pkg/crypto/tls/#Config.CurvePreferences)回退。新增 `tracebacklabels` 设置,控制 runtime traceback 与 debug=2 的 pprof 栈转储中是否包含 runtime/pprof 设置的 goroutine 标签。新增 `cryptocustomrand` 设置,Go 1.26 默认 `0` 表示大多数 crypto/... API 忽略自定义随机 `io.Reader` 参数,置 `1` 恢复 Go 1.26 之前的行为。
 
 ### Go 1.25
 
-Go 1.25 added a new `decoratemappings` setting that controls whether the Go
-runtime annotates OS anonymous memory mappings with context about their
-purpose. These annotations appear in /proc/self/maps and /proc/self/smaps as
-"[anon: Go: ...]". This setting is only used on Linux. For Go 1.25, it defaults
-to `decoratemappings=1`, enabling annotations. Using `decoratemappings=0`
-reverts to the pre-Go 1.25 behavior. This setting is fixed at program startup
-time, and can't be modified by changing the `GODEBUG` environment variable
-after the program starts.
-
-Go 1.25 added a new `embedfollowsymlinks` setting that controls whether the
-Go command will follow symlinks to regular files embedding files.
-The default value `embedfollowsymlinks=0` does not allow following
-symlinks. `embedfollowsymlinks=1` will allow following symlinks.
-
-Go 1.25 added a new `containermaxprocs` setting that controls whether the Go
-runtime will consider cgroup CPU limits when setting the default GOMAXPROCS.
-The default value `containermaxprocs=1` will use cgroup limits in addition to
-the total logical CPU count and CPU affinity. `containermaxprocs=0` will
-disable consideration of cgroup limits. This setting only affects Linux.
-
-Go 1.25 added a new `updatemaxprocs` setting that controls whether the Go
-runtime will periodically update GOMAXPROCS for new CPU affinity or cgroup
-limits. The default value `updatemaxprocs=1` will enable periodic updates.
-`updatemaxprocs=0` will disable periodic updates.
-
-Go 1.25 disabled SHA-1 signature algorithms in TLS 1.2 according to RFC 9155.
-The default can be reverted using the `tlssha1=1` setting.
-
-Go 1.25 switched to SHA-256 to fill in missing SubjectKeyId in
-crypto/x509.CreateCertificate. The setting `x509sha256skid=0` reverts to SHA-1.
-
-Go 1.25 corrected the semantics of contention reports for runtime-internal locks,
-and so removed the [`runtimecontentionstacks` setting](/pkg/runtime#hdr-Environment_Variables).
-
-Go 1.25 (starting with Go 1.25 RC 2) disabled build information stamping when
-multiple VCS are detected due to concerns around VCS injection attacks. This
-behavior and setting was backported to Go 1.24.5 and Go 1.23.11. This behavior
-can be renabled with the setting `allowmultiplevcs=1`.
+新增 `decoratemappings` 设置,控制运行时是否在 /proc/self/maps、/proc/self/smaps 中为匿名内存映射标注用途信息(形如 "[anon: Go: ...]"),仅限 Linux,默认 `1` 开启,且在程序启动时固定。新增 `embedfollowsymlinks` 设置,控制 go 命令嵌入文件时是否跟随指向常规文件的符号链接,默认 `0` 不跟随。新增 `containermaxprocs` 设置(仅 Linux),控制设置默认 GOMAXPROCS 时是否考虑 cgroup CPU 限制,默认 `1`。新增 `updatemaxprocs` 设置,控制运行时是否周期性根据新的 CPU 亲和性或 cgroup 限制更新 GOMAXPROCS,默认 `1`。按 RFC 9155 在 TLS 1.2 中禁用 SHA-1 签名算法,可用 `tlssha1=1` 回退。crypto/x509.CreateCertificate 改用 SHA-256 填充缺失的 SubjectKeyId,可用 `x509sha256skid=0` 回退。修正运行时内部锁争用报告的语义,并移除 [`runtimecontentionstacks` 设置](/pkg/runtime#hdr-Environment_Variables)。自 Go 1.25 RC 2 起,检测到多个 VCS 时因 VCS 注入攻击风险而禁用构建信息打标,已回移至 Go 1.24.5 和 Go 1.23.11,可用 `allowmultiplevcs=1` 重新启用。
 
 ### Go 1.24
 
-Go 1.24 added a new `fips140` setting that controls whether the Go
-Cryptographic Module operates in FIPS 140-3 mode.
-The possible values are:
-- "off": no special support for FIPS 140-3 mode. This is the default.
-- "on": the Go Cryptographic Module operates in FIPS 140-3 mode.
-- "only": like "on", but cryptographic algorithms not approved by
-  FIPS 140-3 return an error or panic.
-For more information, see [FIPS 140-3 Compliance](/doc/security/fips140).
-This setting is fixed at program startup time, and can't be modified
-by changing the `GODEBUG` environment variable after the program starts.
-
-Go 1.24 changed the global [`math/rand.Seed`](/pkg/math/rand/#Seed) to be a
-no-op. This behavior is controlled by the `randseednop` setting.
-For Go 1.24 it defaults to `randseednop=1`.
-Using `randseednop=0` reverts to the pre-Go 1.24 behavior.
-
-Go 1.24 added new values for the `multipathtcp` setting.
-The possible values for `multipathtcp` are now:
-- "0": disable MPTCP on dialers and listeners by default
-- "1": enable MPTCP on dialers and listeners by default
-- "2": enable MPTCP on listeners only by default
-- "3": enable MPTCP on dialers only by default
-
-For Go 1.24, it now defaults to multipathtcp="2", thus
-enabled by default on listeners. Using multipathtcp="0" reverts to the
-pre-Go 1.24 behavior.
-
-Go 1.24 changed the behavior of `go test -json` to emit build errors as JSON
-instead of text.
-These new JSON events are distinguished by new `Action` values,
-but can still cause problems with CI systems that aren't robust to these events.
-This behavior can be controlled with the `gotestjsonbuildtext` setting.
-Using `gotestjsonbuildtext=1` restores the 1.23 behavior.
-This setting will be removed in a future release, Go 1.28 at the earliest.
-
-Go 1.24 changed [`crypto/rsa`](/pkg/crypto/rsa) to require RSA keys to be at
-least 1024 bits. This behavior can be controlled with the `rsa1024min` setting.
-Using `rsa1024min=0` restores the Go 1.23 behavior.
-
-Go 1.24 introduced a mechanism for enabling platform specific Data Independent
-Timing (DIT) modes in the [`crypto/subtle`](/pkg/crypto/subtle) package. This
-mode can be enabled for an entire program with the `dataindependenttiming` setting.
-For Go 1.24 it defaults to `dataindependenttiming=0`. There is no change in default
-behavior from Go 1.23 when `dataindependenttiming` is unset.
-Using `dataindependenttiming=1` enables the DIT mode for the entire Go program.
-When enabled, DIT will be enabled when calling into C from Go. When enabled,
-calling into Go code from C will enable DIT, and disable it before returning to
-C if it was not enabled when Go code was entered.
-This currently only affects arm64 programs. For all other platforms it is a no-op.
-
-Go 1.24 removed the `x509sha1` setting.  `crypto/x509` no longer supports verifying
-signatures on certificates that use SHA-1 based signature algorithms.
-
-Go 1.24 changes the default value of the [`x509usepolicies`
-setting.](/pkg/crypto/x509/#CreateCertificate) from `0` to `1`. When marshalling
-certificates, policies are now taken from the
-[`Certificate.Policies`](/pkg/crypto/x509/#Certificate.Policies) field rather
-than the
-[`Certificate.PolicyIdentifiers`](/pkg/crypto/x509/#Certificate.PolicyIdentifiers)
-field by default.
-
-Go 1.24 enabled the post-quantum key exchange mechanism
-X25519MLKEM768 by default. The default can be reverted using the
-[`tlsmlkem` setting](/pkg/crypto/tls/#Config.CurvePreferences).
-This can be useful when dealing with buggy TLS servers that do not handle large records correctly,
-causing a timeout during the handshake (see [TLS post-quantum TL;DR fail](https://tldr.fail/)).
-Go 1.24 also removed X25519Kyber768Draft00 and the Go 1.23 `tlskyber` setting.
-
-Go 1.24 made [`ParsePKCS1PrivateKey`](/pkg/crypto/x509/#ParsePKCS1PrivateKey)
-use and validate the CRT parameters in the encoded private key. This behavior
-can be controlled with the `x509rsacrt` setting. Using `x509rsacrt=0` restores
-the Go 1.23 behavior.
+新增 `fips140` 设置,控制 Go 密码模块是否运行于 FIPS 140-3 模式,取值:"off"(默认,无特殊支持)、"on"(启用)、"only"(启用,且未经 FIPS 140-3 批准的密码算法返回错误或 panic)。详见 [FIPS 140-3 合规](/doc/security/fips140)。该设置在程序启动时固定,启动后改 `GODEBUG` 无效。全局 [`math/rand.Seed`](/pkg/math/rand/#Seed) 变为空操作,由 `randseednop` 控制,Go 1.24 默认 `randseednop=1`,置 `0` 恢复旧行为。`multipathtcp` 新增取值:"0"(拨号方与监听方均默认禁用)、"1"(均默认启用)、"2"(仅监听方默认启用)、"3"(仅拨号方默认启用);Go 1.24 默认 "2",置 "0" 恢复旧行为。`go test -json` 改为以 JSON 输出构建错误(新 `Action` 值区分),可能影响不够健壮的 CI 系统,由 `gotestjsonbuildtext` 控制,置 `1` 恢复 1.23 行为,该设置最早 Go 1.28 移除。[crypto/rsa](/pkg/crypto/rsa) 要求 RSA 密钥至少 1024 位,由 `rsa1024min` 控制,置 `0` 恢复 Go 1.23 行为。在 [`crypto/subtle`](/pkg/crypto/subtle) 引入启用平台相关数据独立计时(DIT)模式的机制,可用 `dataindependenttiming` 设置对整个程序启用,Go 1.24 默认 `0`;启用后从 Go 调入 C 时也保持 DIT,从 C 调入 Go 时临时启用并在返回前恢复;目前仅影响 arm64 程序。移除 `x509sha1` 设置,crypto/x509 不再支持验证基于 SHA-1 签名算法的证书。[`x509usepolicies` 设置](/pkg/crypto/x509/#CreateCertificate)默认值从 `0` 改为 `1`:编组证书时默认取 [`Certificate.Policies`](/pkg/crypto/x509/#Certificate.Policies) 字段而非 [`Certificate.PolicyIdentifiers`](/pkg/crypto/x509/#Certificate.PolicyIdentifiers)。默认启用后量子密钥交换机制 X25519MLKEM768,可用 [`tlsmlkem` 设置](/pkg/crypto/tls/#Config.CurvePreferences)回退——这对无法正确处理大记录、握手超时的有缺陷 TLS 服务器有用(见 [TLS post-quantum TL;DR fail](https://tldr.fail/));同时移除 X25519Kyber768Draft00 与 Go 1.23 的 `tlskyber` 设置。[ParsePKCS1PrivateKey](/pkg/crypto/x509/#ParsePKCS1PrivateKey) 现在使用并校验私钥编码中的 CRT 参数,由 `x509rsacrt` 控制,置 `0` 恢复 Go 1.23 行为。
 
 ### Go 1.23
 
-Go 1.23 changed the channels created by package time to be unbuffered
-(synchronous), which makes correct use of the [`Timer.Stop`](/pkg/time/#Timer.Stop)
-and [`Timer.Reset`](/pkg/time/#Timer.Reset) method results much easier.
-The [`asynctimerchan` setting](/pkg/time/#NewTimer) disables this change.
-There are no runtime metrics for this change.
-This setting will be removed in Go 1.27.
-
-Go 1.23 changed the mode bits reported by [`os.Lstat`](/pkg/os#Lstat) and [`os.Stat`](/pkg/os#Stat)
-for reparse points, which can be controlled with the `winsymlink` setting.
-As of Go 1.23 (`winsymlink=1`), mount points no longer have [`os.ModeSymlink`](/pkg/os#ModeSymlink)
-set, and reparse points that are not symlinks, Unix sockets, or dedup files now
-always have [`os.ModeIrregular`](/pkg/os#ModeIrregular) set. As a result of these changes,
-[`filepath.EvalSymlinks`](/pkg/path/filepath#EvalSymlinks) no longer evaluates
-mount points, which was a source of many inconsistencies and bugs.
-At previous versions (`winsymlink=0`), mount points are treated as symlinks,
-and other reparse points with non-default [`os.ModeType`](/pkg/os#ModeType) bits
-(such as [`os.ModeDir`](/pkg/os#ModeDir)) do not have the `ModeIrregular` bit set.
-
-Go 1.23 changed [`os.Readlink`](/pkg/os#Readlink) and [`filepath.EvalSymlinks`](/pkg/path/filepath#EvalSymlinks)
-to avoid trying to normalize volumes to drive letters, which was not always even possible.
-This behavior is controlled by the `winreadlinkvolume` setting.
-For Go 1.23, it defaults to `winreadlinkvolume=1`.
-Previous versions default to `winreadlinkvolume=0`.
-
-Go 1.23 enabled the experimental post-quantum key exchange mechanism
-X25519Kyber768Draft00 by default. The default can be reverted using the
-[`tlskyber` setting](/pkg/crypto/tls/#Config.CurvePreferences).
-This can be useful when dealing with buggy TLS servers that do not handle large records correctly,
-causing a timeout during the handshake (see [TLS post-quantum TL;DR fail](https://tldr.fail/)).
-
-Go 1.23 changed the behavior of
-[crypto/x509.ParseCertificate](/pkg/crypto/x509/#ParseCertificate) to reject
-serial numbers that are negative. This change can be reverted with
-the [`x509negativeserial` setting](/pkg/crypto/x509/#ParseCertificate).
-
-Go 1.23 re-enabled support in html/template for ECMAScript 6 template literals by default.
-The [`jstmpllitinterp` setting](/pkg/html/template#hdr-Security_Model) no longer has
-any effect.
-
-Go 1.23 changed the default TLS cipher suites used by clients and servers when
-not explicitly configured, removing 3DES cipher suites. The default can be reverted
-using the [`tls3des` setting](/pkg/crypto/tls/#Config.CipherSuites).
-This setting will be removed in Go 1.27.
-
-Go 1.23 changed the behavior of [`tls.X509KeyPair`](/pkg/crypto/tls#X509KeyPair)
-and [`tls.LoadX509KeyPair`](/pkg/crypto/tls#LoadX509KeyPair) to populate the
-Leaf field of the returned [`tls.Certificate`](/pkg/crypto/tls#Certificate).
-This behavior is controlled by the `x509keypairleaf` setting. For Go 1.23, it
-defaults to `x509keypairleaf=1`. Previous versions default to
-`x509keypairleaf=0`.
-This setting will be removed in Go 1.27.
-
-Go 1.23 changed
-[`net/http.ServeContent`](/pkg/net/http#ServeContent),
-[`net/http.ServeFile`](/pkg/net/http#ServeFile), and
-[`net/http.ServeFS`](/pkg/net/http#ServeFS) to
-remove Cache-Control, Content-Encoding, Etag, and Last-Modified headers
-when serving an error. This behavior is controlled by
-the [`httpservecontentkeepheaders` setting](/pkg/net/http#ServeContent).
-Using `httpservecontentkeepheaders=1` restores the pre-Go 1.23 behavior.
+time 包创建的通道改为无缓冲(同步),使 [`Timer.Stop`](/pkg/time/#Timer.Stop) 与 [`Timer.Reset`](/pkg/time/#Timer.Reset) 返回值更易正确使用;[`asynctimerchan` 设置](/pkg/time/#NewTimer)可禁用此变更;无对应的运行时指标;该设置将于 Go 1.27 移除。Windows 上 reparse point 的模式位报告改变,由 `winsymlink` 控制:Go 1.23 起(`winsymlink=1`)挂载点不再置 [`os.ModeSymlink`](/pkg/os#ModeSymlink),非符号链接/Unix 套接字/去重文件的 reparse point 一律置 [`os.ModeIrregular`](/pkg/os#ModeIrregular);[`filepath.EvalSymlinks`](/pkg/path/filepath#EvalSymlinks) 不再展开挂载点(这曾是大量不一致与 bug 的来源)。旧版本(`winsymlink=0`)把挂载点当符号链接,且其他带非默认 [`os.ModeType`](/pkg/os#ModeType) 位(如 [`os.ModeDir`](/pkg/os#ModeDir))的 reparse point 不置 `ModeIrregular` 位。[os.Readlink](/pkg/os#Readlink) 与 [`filepath.EvalSymlinks`](/pkg/path/filepath#EvalSymlinks) 不再尝试把卷名规范化为盘符(这本来也并非总可行),由 `winreadlinkvolume` 控制,Go 1.23 默认 `1`,旧版本默认 `0`。默认启用实验性后量子密钥交换机制 X25519Kyber768Draft00,可用 [`tlskyber` 设置](/pkg/crypto/tls/#Config.CurvePreferences)回退。[crypto/x509.ParseCertificate](/pkg/crypto/x509/#ParseCertificate) 改为拒绝负序列号,可用 [`x509negativeserial` 设置](/pkg/crypto/x509/#ParseCertificate)回退。html/template 默认重新支持 ECMAScript 6 模板字面量,[`jstmpllitinterp` 设置](/pkg/html/template#hdr-Security_Model)不再有任何效果。未显式配置时,客户端与服务器的默认 TLS 密码套件移除 3DES,可用 [`tls3des` 设置](/pkg/crypto/tls/#Config.CipherSuites)回退,该设置将于 Go 1.27 移除。[tls.X509KeyPair](/pkg/crypto/tls#X509KeyPair) 与 [tls.LoadX509KeyPair](/pkg/crypto/tls#LoadX509KeyPair) 会填充返回的 [tls.Certificate](/pkg/crypto/tls#Certificate) 的 Leaf 字段,由 `x509keypairleaf` 控制,Go 1.23 默认 `1`,旧版本默认 `0`,该设置将于 Go 1.27 移除。[net/http.ServeContent](/pkg/net/http#ServeContent)、[net/http.ServeFile](/pkg/net/http#ServeFile)、[net/http.ServeFS](/pkg/net/http#ServeFS) 出错响应时移除 Cache-Control、Content-Encoding、Etag、Last-Modified 头,由 [`httpservecontentkeepheaders` 设置](/pkg/net/http#ServeContent)控制,置 `1` 恢复 Go 1.23 之前的行为。
 
 ### Go 1.22
 
-Go 1.22 adds a configurable limit to control the maximum acceptable RSA key size
-that can be used in TLS handshakes, controlled by the [`tlsmaxrsasize` setting](/pkg/crypto/tls#Conn.Handshake).
-The default is tlsmaxrsasize=8192, limiting RSA to 8192-bit keys. To avoid
-denial of service attacks, this setting and default was backported to Go
-1.19.13, Go 1.20.8, and Go 1.21.1.
-
-Go 1.22 made it an error for a request or response read by a net/http
-client or server to have an empty Content-Length header.
-This behavior is controlled by the `httplaxcontentlength` setting.
-
-Go 1.22 changed the behavior of ServeMux to accept extended
-patterns and unescape both patterns and request paths by segment.
-This behavior can be controlled by the
-[`httpmuxgo121` setting](/pkg/net/http/#ServeMux).
-
-Go 1.22 added the [Alias type](/pkg/go/types#Alias) to [go/types](/pkg/go/types)
-for the explicit representation of [type aliases](/ref/spec#Type_declarations).
-Whether the type checker produces `Alias` types or not is controlled by the
-[`gotypesalias` setting](/pkg/go/types#Alias).
-For Go 1.22 it defaults to `gotypesalias=0`.
-For Go 1.23, `gotypesalias=1` will become the default.
-This setting will be removed in Go 1.27.
-
-Go 1.22 changed the default minimum TLS version supported by both servers
-and clients to TLS 1.2. The default can be reverted to TLS 1.0 using the
-[`tls10server` setting](/pkg/crypto/tls/#Config).
-This setting will be removed in Go 1.27.
-
-Go 1.22 changed the default TLS cipher suites used by clients and servers when
-not explicitly configured, removing the cipher suites which used RSA based key
-exchange. The default can be reverted using the [`tlsrsakex` setting](/pkg/crypto/tls/#Config).
-This setting will be removed in Go 1.27.
-
-Go 1.22 disabled
-[`ConnectionState.ExportKeyingMaterial`](/pkg/crypto/tls/#ConnectionState.ExportKeyingMaterial)
-when the connection supports neither TLS 1.3 nor Extended Master Secret
-(implemented in Go 1.21). It can be reenabled with the [`tlsunsafeekm`
-setting](/pkg/crypto/tls/#ConnectionState.ExportKeyingMaterial).
-This setting will be removed in Go 1.27.
-
-Go 1.22 changed how the runtime interacts with transparent huge pages on Linux.
-In particular, a common default Linux kernel configuration can result in
-significant memory overheads, and Go 1.22 no longer works around this default.
-To work around this issue without adjusting kernel settings, transparent huge
-pages can be disabled for Go memory with the
-[`disablethp` setting](/pkg/runtime#hdr-Environment_Variables).
-This behavior was backported to Go 1.21.1, but the setting is only available
-starting with Go 1.21.6.
-This setting may be removed in a future release, and users impacted by this issue
-should adjust their Linux configuration according to the recommendations in the
-[GC guide](/doc/gc-guide#Linux_transparent_huge_pages), or switch to a Linux
-distribution that disables transparent huge pages altogether.
-
-Go 1.22 added contention on runtime-internal locks to the [`mutex`
-profile](/pkg/runtime/pprof#Profile). Contention on these locks is always
-reported at `runtime._LostContendedRuntimeLock`. Complete stack traces of
-runtime locks can be enabled with the [`runtimecontentionstacks`
-setting](/pkg/runtime#hdr-Environment_Variables). These stack traces have
-non-standard semantics, see setting documentation for details.
-
-Go 1.22 added a new [`crypto/x509.Certificate`](/pkg/crypto/x509/#Certificate)
-field, [`Policies`](/pkg/crypto/x509/#Certificate.Policies), which supports
-certificate policy OIDs with components larger than 31 bits. By default this
-field is only used during parsing, when it is populated with policy OIDs, but
-not used during marshaling. It can be used to marshal these larger OIDs, instead
-of the existing PolicyIdentifiers field, by using the
-[`x509usepolicies` setting](/pkg/crypto/x509/#CreateCertificate).
-
+新增可配置的 [`tlsmaxrsasize` 设置](/pkg/crypto/tls#Conn.Handshake),限制 TLS 握手中可接受的 RSA 密钥最大长度,默认 tlsmaxrsasize=8192;为防拒绝服务攻击,已回移至 Go 1.19.13、Go 1.20.8 与 Go 1.21.1。net/http 客户端或服务器读到空 Content-Length 头的请求或响应时报错,由 `httplaxcontentlength` 控制。ServeMux 改为接受扩展模式并按段反转义模式与请求路径,由 [`httpmuxgo121` 设置](/pkg/net/http/#ServeMux)控制。[go/types](/pkg/go/types) 新增用于显式表示[类型别名](/ref/spec#Type_declarations)的 [Alias 类型](/pkg/go/types#Alias),类型检查器是否产出 `Alias` 类型由 [`gotypesalias` 设置](/pkg/go/types#Alias)控制,Go 1.22 默认 `0`,Go 1.23 起默认 `1`,该设置将于 Go 1.27 移除。服务器与客户端默认支持的最低 TLS 版本改为 TLS 1.2,可用 [`tls10server` 设置](/pkg/crypto/tls/#Config)回退到 TLS 1.0,该设置将于 Go 1.27 移除。未显式配置时,默认 TLS 密码套件移除基于 RSA 密钥交换的套件,可用 [`tlsrsakex` 设置](/pkg/crypto/tls/#Config)回退,该设置将于 Go 1.27 移除。当连接既不支持 TLS 1.3 也不支持扩展主密钥(Go 1.21 实现)时,禁用 [`ConnectionState.ExportKeyingMaterial`](/pkg/crypto/tls/#ConnectionState.ExportKeyingMaterial),可用 [`tlsunsafeekm` 设置](/pkg/crypto/tls/#ConnectionState.ExportKeyingMaterial)重新启用,该设置将于 Go 1.27 移除。改变运行时与 Linux 透明大页的交互方式:常见的 Linux 内核默认配置可能导致显著内存开销,Go 1.22 不再绕过该默认;可用 [`disablethp` 设置](/pkg/runtime#hdr-Environment_Variables)对 Go 内存禁用透明大页,该行为已回移至 Go 1.21.1,但设置自 Go 1.21.6 起可用;受影响的用户应按 [GC 指南](/doc/gc-guide#Linux_transparent_huge_pages)的建议调整 Linux 配置,或改用完全禁用透明大页的发行版。运行时内部锁的争用被纳入 [`mutex` profile](/pkg/runtime/pprof#Profile),这些锁的争用一律记在 `runtime._LostContendedRuntimeLock`,可用 [`runtimecontentionstacks` 设置](/pkg/runtime#hdr-Environment_Variables)启用完整栈回溯(其语义非标准,详见设置文档)。[crypto/x509.Certificate](/pkg/crypto/x509/#Certificate) 新增 [`Policies`](/pkg/crypto/x509/#Certificate.Policies) 字段,支持分量大于 31 位的证书策略 OID;默认仅在解析时填充,编组时不使用;可通过 [`x509usepolicies` 设置](/pkg/crypto/x509/#CreateCertificate)在编组时用它替代现有的 PolicyIdentifiers 字段。
 
 ### Go 1.21
 
-Go 1.21 made it a run-time error to call `panic` with a nil interface value,
-controlled by the [`panicnil` setting](/pkg/builtin/#panic).
-
-Go 1.21 made it an error for html/template actions to appear inside of an ECMAScript 6
-template literal, controlled by the
-[`jstmpllitinterp` setting](/pkg/html/template#hdr-Security_Model).
-This behavior was backported to Go 1.19.8+ and Go 1.20.3+.
-
-Go 1.21 introduced a limit on the maximum number of MIME headers and multipart
-forms, controlled by the
-[`multipartmaxheaders` and `multipartmaxparts` settings](/pkg/mime/multipart#hdr-Limits)
-respectively.
-This behavior was backported to Go 1.19.8+ and Go 1.20.3+.
-
-Go 1.21 adds the support of Multipath TCP but it is only used if the application
-explicitly asked for it. This behavior can be controlled by the
-[`multipathtcp` setting](/pkg/net#Dialer.SetMultipathTCP).
-
-There is no plan to remove any of these settings.
+`panic` 传入 nil 接口值成为运行时错误,由 [`panicnil` 设置](/pkg/builtin/#panic)控制。html/template 的 action 出现在 ECMAScript 6 模板字面量内时报错,由 [`jstmpllitinterp` 设置](/pkg/html/template#hdr-Security_Model)控制,该行为已回移至 Go 1.19.8+ 与 Go 1.20.3+。新增 MIME 头与 multipart 表单的最大数量限制,分别由 [`multipartmaxheaders` 与 `multipartmaxparts` 设置](/pkg/mime/multipart#hdr-Limits)控制,已回移至 Go 1.19.8+ 与 Go 1.20.3+。新增 Multipath TCP 支持,但仅在应用显式要求时使用,由 [`multipathtcp` 设置](/pkg/net#Dialer.SetMultipathTCP)控制。暂无移除这些设置的计划。
 
 ### Go 1.20
 
-Go 1.20 introduced support for rejecting insecure paths in tar and zip archives,
-controlled by the [`tarinsecurepath` setting](/pkg/archive/tar/#Reader.Next)
-and the [`zipinsecurepath` setting](/pkg/archive/zip/#NewReader).
-These default to `tarinsecurepath=1` and `zipinsecurepath=1`,
-preserving the behavior of earlier versions of Go.
-A future version of Go may change the defaults to
-`tarinsecurepath=0` and `zipinsecurepath=0`.
-
-Go 1.20 introduced automatic seeding of the
-[`math/rand`](/pkg/math/rand) global random number generator,
-controlled by the [`randautoseed` setting](/pkg/math/rand/#Seed).
-
-Go 1.20 introduced the concept of fallback roots for use during certificate verification,
-controlled by the [`x509usefallbackroots` setting](/pkg/crypto/x509/#SetFallbackRoots).
-
-Go 1.20 removed the preinstalled `.a` files for the standard library
-from the Go distribution.
-Installations now build and cache the standard library like
-packages in other modules.
-The [`installgoroot` setting](/cmd/go#hdr-Compile_and_install_packages_and_dependencies)
-restores the installation and use of preinstalled `.a` files.
-
-There is no plan to remove any of these settings.
+新增拒绝 tar 与 zip 归档中不安全路径的支持,分别由 [`tarinsecurepath` 设置](/pkg/archive/tar/#Reader.Next)与 [`zipinsecurepath` 设置](/pkg/archive/zip/#NewReader)控制;默认均为 `1`,保持早期版本行为;未来版本可能将默认改为 `0`。新增 [`math/rand`](/pkg/math/rand) 全局随机数生成器的自动播种,由 [`randautoseed` 设置](/pkg/math/rand/#Seed)控制。新增证书验证用的回退根证书概念,由 [`x509usefallbackroots` 设置](/pkg/crypto/x509/#SetFallbackRoots)控制。Go 发行版不再预装标准库 `.a` 文件,现在与其他模块的包一样构建并缓存标准库;[`installgoroot` 设置](/cmd/go#hdr-Compile_and_install_packages_and_dependencies)可恢复预装 `.a` 文件的安装与使用。暂无移除这些设置的计划。
 
 ### Go 1.19
 
-Go 1.19 made it an error for path lookups to resolve to binaries in the current directory,
-controlled by the [`execerrdot` setting](/pkg/os/exec#hdr-Executables_in_the_current_directory).
-There is no plan to remove this setting.
-
-Go 1.19 started sending EDNS0 additional headers on DNS requests.
-This can reportedly break the DNS server provided on some routers,
-such as CenturyLink Zyxel C3000Z.
-This can be changed by the [`netedns0` setting](/pkg/net#hdr-Name_Resolution).
-This setting is available in Go 1.21.12, Go 1.22.5, Go 1.23, and later.
-There is no plan to remove this setting.
+路径查找解析到当前目录中的可执行文件时报错,由 [`execerrdot` 设置](/pkg/os/exec#hdr-Executables_in_the_current_directory)控制,暂无移除计划。DNS 请求开始发送 EDNS0 附加头,据报道会破坏某些路由器(如 CenturyLink Zyxel C3000Z)提供的 DNS 服务器,可由 [`netedns0` 设置](/pkg/net#hdr-Name_Resolution)更改;该设置在 Go 1.21.12、Go 1.22.5、Go 1.23 及以后可用,暂无移除计划。
 
 ### Go 1.18
 
-Go 1.18 removed support for SHA1 in most X.509 certificates,
-controlled by the [`x509sha1` setting](/pkg/crypto/x509#InsecureAlgorithmError).
-This setting was removed in Go 1.24.
+大多数 X.509 证书不再支持 SHA1,由 [`x509sha1` 设置](/pkg/crypto/x509#InsecureAlgorithmError)控制;该设置已于 Go 1.24 移除。
 
 ### Go 1.10
 
-Go 1.10 changed how build caching worked and added test caching, along
-with the [`gocacheverify`, `gocachehash`, and `gocachetest` settings](/cmd/go/#hdr-Build_and_test_caching).
-There is no plan to remove these settings.
+改变构建缓存工作方式并新增测试缓存,引入 [`gocacheverify`、`gocachehash`、`gocachetest` 设置](/cmd/go/#hdr-Build_and_test_caching),暂无移除计划。
 
 ### Go 1.6
 
-Go 1.6 introduced transparent support for HTTP/2,
-controlled by the [`http2client`, `http2server`, and `http2debug` settings](/pkg/net/http/#hdr-HTTP_2).
-There is no plan to remove these settings.
+引入对 HTTP/2 的透明支持,引入 [`http2client`、`http2server`、`http2debug` 设置](/pkg/net/http/#hdr-HTTP_2),暂无移除计划。
 
 ### Go 1.5
 
-Go 1.5 introduced a pure Go DNS resolver,
-controlled by the [`netdns` setting](/pkg/net/#hdr-Name_Resolution).
-There is no plan to remove this setting.
+引入纯 Go DNS 解析器,引入 [`netdns` 设置](/pkg/net/#hdr-Name_Resolution),暂无移除计划。
