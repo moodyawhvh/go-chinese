@@ -1,16 +1,17 @@
-## Tools {#tools}
+> 🌐 本文档由 [golang/go](https://github.com/golang/go) 翻译,英文原版见原项目。
 
-### Go command {#go-command}
+## 工具 {#tools}
+
+### Go 命令 {#go-command}
 
 ### Cgo {#cgo}
 
 ### Vet {#vet}
 
-The new [`scannererr`](https://pkg.go.dev/golang.org/x/tools/go/analysis/passes/scannererr)
-analyzer checks for failure to handle scanner errors after a loop
-around [bufio.Scanner.Scan], which may cause scanning or I/O errors to
-go unreported. <!-- /issue/17747/ -->
+新增的 [`scannererr`](https://pkg.go.dev/golang.org/x/tools/go/analysis/passes/scannererr)
+分析器会检查在 [bufio.Scanner.Scan] 外层循环结束后是否没有处理 scanner 错误,
+这种疏漏可能导致扫描错误或 I/O 错误被漏报。 <!-- /issue/17747/ -->
 
-The [`sqlrowserr`](https://pkg.go.dev/golang.org/x/tools/go/analysis/passes/sqlrowserr)
-analyzer performs a similar check for loops around [sql.Rows.Next],
-so that iteration errors are correctly distinguished from a smaller result.
+[`sqlrowserr`](https://pkg.go.dev/golang.org/x/tools/go/analysis/passes/sqlrowserr)
+分析器对 [sql.Rows.Next] 外层的循环执行类似的检查,
+以便把迭代错误与"结果集较小"正确区分开。
